@@ -9,7 +9,7 @@ import {
   createCamera,
   createRenderer,
   runApp,
-  getDefaultUniforms
+  getDefaultUniforms,
 } from "./core-utils";
 
 global.THREE = THREE;
@@ -19,7 +19,6 @@ global.THREE = THREE;
  *************************************************/
 const uniforms = {
   ...getDefaultUniforms(),
-  u_pointsize: { value: 2.0 },
   // wave 1
   u_noise_freq_1: { value: 3.0 },
   u_noise_amp_1: { value: 0.2 },
@@ -27,7 +26,7 @@ const uniforms = {
   // wave 2
   u_noise_freq_2: { value: 2.0 },
   u_noise_amp_2: { value: 0.3 },
-  u_spd_modifier_2: { value: 0.8 }
+  u_spd_modifier_2: { value: 0.8 },
 };
 
 /**************************************************
@@ -37,19 +36,13 @@ const uniforms = {
 let scene = new THREE.Scene();
 
 // Create the renderer via 'createRenderer',
-// 1st param receives additional WebGLRenderer properties
-// 2nd param receives a custom callback to further configure the renderer
 let renderer = createRenderer({ antialias: true });
 
-// Create the camera
-// Pass in fov, near, far and camera position respectively
-let camera = createCamera(60, 1, 100, { x: 0, y: 0, z: 4.5 });
+// Create the camera with extended far clipping plane
+let camera = createCamera(80, 0.1, 100, { x: 0, y: 0, z: 4 }); // Increased far plane from 10 to 100
 
 /**************************************************
  * 2. Build your scene in this threejs app
- * This app object needs to consist of at least the async initScene() function (it is async so the animate function can wait for initScene() to finish before being called)
- * initScene() is called after a basic threejs environment has been set up, you can add objects/lighting to you scene in initScene()
- * if your app needs to animate things(i.e. not static), include a updateScene(interval, elapsed) function in the app as well
  *************************************************/
 let app = {
   vertexShader() {
@@ -57,13 +50,14 @@ let app = {
     #define PI 3.14159265359
 
     uniform float u_time;
-    uniform float u_pointsize;
     uniform float u_noise_amp_1;
     uniform float u_noise_freq_1;
     uniform float u_spd_modifier_1;
     uniform float u_noise_amp_2;
     uniform float u_noise_freq_2;
     uniform float u_spd_modifier_2;
+
+    varying float vPosY;
 
     // 2D Random
     float random (in vec2 st) {
@@ -72,8 +66,7 @@ let app = {
                     * 43758.5453123);
     }
 
-    // 2D Noise based on Morgan McGuire @morgan3d
-    // https://www.shadertoy.com/view/4dS3Wd
+    // 2D Noise
     float noise (in vec2 st) {
         vec2 i = floor(st);
         vec2 f = fract(st);
@@ -85,12 +78,9 @@ let app = {
         float d = random(i + vec2(1.0, 1.0));
 
         // Smooth Interpolation
-
-        // Cubic Hermine Curve.  Same as SmoothStep()
         vec2 u = f*f*(3.0-2.0*f);
-        // u = smoothstep(0.,1.,f);
 
-        // Mix 4 coorners percentages
+        // Mix 4 corners percentages
         return mix(a, b, u.x) +
                 (c - a)* u.y * (1.0 - u.x) +
                 (d - b) * u.x * u.y;
@@ -102,14 +92,12 @@ let app = {
     }
 
     void main() {
-      gl_PointSize = u_pointsize;
-
       vec3 pos = position;
-      // pos.xy is the original 2D dimension of the plane coordinates
+      vPosY = pos.y; // Pass the y-position to the fragment shader
+
+      // Apply noise to create wave effect
       pos.z += noise(pos.xy * u_noise_freq_1 + u_time * u_spd_modifier_1) * u_noise_amp_1;
-      // add noise layering
-      // minus u_time makes the second layer of wave goes the other direction
-      pos.z += noise(rotate2d(PI / 4.) * pos.yx * u_noise_freq_2 - u_time * u_spd_modifier_2 * 0.6) * u_noise_amp_2;
+      pos.z += noise(rotate2d(PI / 4.) * pos.xy * u_noise_freq_2 - u_time * u_spd_modifier_2 * 0.6) * u_noise_amp_2;
 
       vec4 mvm = modelViewMatrix * vec4(pos, 1.0);
       gl_Position = projectionMatrix * mvm;
@@ -122,15 +110,20 @@ let app = {
     precision mediump float;
     #endif
 
-    #define PI 3.14159265359
-    #define TWO_PI 6.28318530718
-    
-    uniform vec2 u_resolution;
+    varying float vPosY;
 
     void main() {
-      vec2 st = gl_FragCoord.xy/u_resolution.xy;
+      // Define gradient colors
+      vec3 colorStart = vec3(235.0/255.0, 116.0/255.0, 206.0/255.0); // #EB74CE
+      vec3 colorEnd = vec3(50.0/255.0, 137.0/255.0, 247.0/255.0);    // #3289F7
 
-      gl_FragColor = vec4(vec3(0.0, st),1.0);
+      // Calculate gradient based on vPosY
+      float gradientFactor = (vPosY + 2.0) / 4.0; // Adjust based on mesh dimensions
+      gradientFactor = clamp(gradientFactor, 0.0, 1.0);
+
+      vec3 color = mix(colorStart, colorEnd, gradientFactor);
+
+      gl_FragColor = vec4(color, 1.0);
     }
     `;
   },
@@ -139,76 +132,52 @@ let app = {
     this.controls = new OrbitControls(camera, renderer.domElement);
     this.controls.enableDamping = true;
     this.controls.autoRotate = true;
-    this.controls.autoRotateSpeed = 2.0;
+    this.controls.autoRotateSpeed = 0;
 
     // Environment
-    scene.background = new THREE.Color("#0d1214");
+    scene.background = new THREE.Color("#191932");
 
     // Mesh
-    this.geometry = new THREE.PlaneGeometry(4, 4, 128, 128);
+    // Create a custom hexagonal grid geometry with thick edges
+    this.geometry = this.createHexagonalMeshGeometry(4, 4, 0.1, 0.002);
+
     const material = new THREE.ShaderMaterial({
       uniforms: uniforms,
       vertexShader: this.vertexShader(),
-      fragmentShader: this.fragmentShader()
+      fragmentShader: this.fragmentShader(),
     });
-    // const material = new THREE.MeshStandardMaterial();
-    this.mesh = new THREE.Points(this.geometry, material);
+
+    this.mesh = new THREE.Mesh(this.geometry, material);
     scene.add(this.mesh);
 
-    // set appropriate positioning
-    // this.mesh.position.set(-0.1, 0.4, 0);
-    this.mesh.rotation.x = 3.1415 / 2;
-    this.mesh.rotation.y = 3.1415 / 4;
+    // Set appropriate positioning
+    this.mesh.rotation.x = -Math.PI / 2;
+    this.mesh.position.y = 0;
 
     // GUI controls
     const gui = new dat.GUI();
 
-    gui
-      .add(uniforms.u_pointsize, "value", 1.0, 10.0, 0.5)
-      .name("Point Size")
-      .onChange((val) => {
-        uniforms.u_pointsize.value = val;
-      });
-
     let wave1 = gui.addFolder("Wave 1");
     wave1
-      .add(uniforms.u_noise_freq_1, "value", 0.1, 3, 0.1)
-      .name("Frequency")
-      .onChange((val) => {
-        uniforms.u_noise_freq_1.value = val;
-      });
+      .add(uniforms.u_noise_freq_1, "value", 0.1, 5, 0.1)
+      .name("Frequency");
     wave1
-      .add(uniforms.u_noise_amp_1, "value", 0.1, 3, 0.1)
-      .name("Amplitude")
-      .onChange((val) => {
-        uniforms.u_noise_amp_1.value = val;
-      });
+      .add(uniforms.u_noise_amp_1, "value", 0.0, 1.0, 0.01)
+      .name("Amplitude");
     wave1
-      .add(uniforms.u_spd_modifier_1, "value", 0.01, 2.0, 0.01)
-      .name("Speed")
-      .onChange((val) => {
-        uniforms.u_spd_modifier_1.value = val;
-      });
+      .add(uniforms.u_spd_modifier_1, "value", 0.0, 5.0, 0.1)
+      .name("Speed");
 
     let wave2 = gui.addFolder("Wave 2");
     wave2
-      .add(uniforms.u_noise_freq_2, "value", 0.1, 3, 0.1)
-      .name("Frequency")
-      .onChange((val) => {
-        uniforms.u_noise_freq_2.value = val;
-      });
+      .add(uniforms.u_noise_freq_2, "value", 0.1, 5, 0.1)
+      .name("Frequency");
     wave2
-      .add(uniforms.u_noise_amp_2, "value", 0.1, 3, 0.1)
-      .name("Amplitude")
-      .onChange((val) => {
-        uniforms.u_noise_amp_2.value = val;
-      });
+      .add(uniforms.u_noise_amp_2, "value", 0.0, 1.0, 0.01)
+      .name("Amplitude");
     wave2
-      .add(uniforms.u_spd_modifier_2, "value", 0.01, 2.0, 0.01)
-      .name("Speed")
-      .onChange((val) => {
-        uniforms.u_spd_modifier_2.value = val;
-      });
+      .add(uniforms.u_spd_modifier_2, "value", 0.0, 5.0, 0.1)
+      .name("Speed");
 
     // Stats - show fps
     this.stats1 = new Stats();
@@ -218,20 +187,95 @@ let app = {
     // this.container is the parent DOM element of the threejs canvas element
     this.container.appendChild(this.stats1.domElement);
   },
+  // Create the hexagonal grid geometry with thick edges
+  createHexagonalMeshGeometry(gridWidth, gridHeight, hexRadius, lineThickness) {
+    const geometry = new THREE.BufferGeometry();
+
+    const vertices = [];
+    const indices = [];
+
+    const hexWidth = Math.sqrt(3) * hexRadius; // Width of the hexagon
+    const hexHeight = 2 * hexRadius; // Height of the hexagon
+
+    const horizDist = hexWidth; // Horizontal distance between hex centers
+    const vertDist = (3 / 4) * hexHeight; // Vertical distance between hex centers
+
+    // Calculate the number of hexagons in each direction
+    const cols = Math.ceil((gridWidth + hexWidth) / horizDist);
+    const rows = Math.ceil((gridHeight + hexHeight) / vertDist);
+
+    let vertexIndex = 0;
+
+    for (let row = -rows; row <= rows; row++) {
+      for (let col = -cols; col <= cols; col++) {
+        // Calculate the position of the hexagon center
+        const x = col * horizDist + (row % 2) * (horizDist / 2);
+        const y = row * vertDist;
+        // Center the grid
+        const posX = x - gridWidth / 2;
+        const posY = y - gridHeight / 2;
+
+        // Create hexagon edges as rectangles (quads)
+        const rotationOffset = Math.PI / 3; // Rotate hexagon by 60 degrees
+        const hexVertices = [];
+        for (let i = 0; i < 6; i++) {
+          const angle1 = (Math.PI / 3) * i + rotationOffset;
+          const angle2 = (Math.PI / 3) * ((i + 1) % 6) + rotationOffset;
+
+          const x1 = posX + hexRadius * Math.cos(angle1);
+          const y1 = posY + hexRadius * Math.sin(angle1);
+
+          const x2 = posX + hexRadius * Math.cos(angle2);
+          const y2 = posY + hexRadius * Math.sin(angle2);
+
+          // Calculate edge direction and normal
+          const dx = x2 - x1;
+          const dy = y2 - y1;
+          const length = Math.sqrt(dx * dx + dy * dy);
+          const nx = -dy / length;
+          const ny = dx / length;
+
+          // Create two vertices for the quad (edge)
+          const offsetX = (lineThickness / 2) * nx;
+          const offsetY = (lineThickness / 2) * ny;
+
+          vertices.push(
+            x1 + offsetX, y1 + offsetY, 0, // Vertex 1
+            x1 - offsetX, y1 - offsetY, 0, // Vertex 2
+            x2 - offsetX, y2 - offsetY, 0, // Vertex 3
+            x2 + offsetX, y2 + offsetY, 0  // Vertex 4
+          );
+
+          // Add two triangles to form the quad
+          indices.push(
+            vertexIndex, vertexIndex + 1, vertexIndex + 2,
+            vertexIndex, vertexIndex + 2, vertexIndex + 3
+          );
+
+          vertexIndex += 4;
+        }
+      }
+    }
+
+    geometry.setAttribute(
+      "position",
+      new THREE.Float32BufferAttribute(vertices, 3)
+    );
+    geometry.setIndex(indices);
+
+    geometry.computeVertexNormals();
+
+    return geometry;
+  },
   // @param {number} interval - time elapsed between 2 frames
   // @param {number} elapsed - total time elapsed since app start
   updateScene(interval, elapsed) {
     this.controls.update();
     this.stats1.update();
-  }
+  },
 };
 
 /**************************************************
  * 3. Run the app
- * 'runApp' will do most of the boilerplate setup code for you:
- * e.g. HTML container, window resize listener, mouse move/touch listener for shader uniforms, THREE.Clock() for animation
- * Executing this line puts everything together and runs the app
- * ps. if you don't use custom shaders, pass undefined to the 'uniforms'(2nd-last) param
- * ps. if you don't use post-processing, pass undefined to the 'composer'(last) param
  *************************************************/
 runApp(app, scene, renderer, camera, true, uniforms, undefined);
