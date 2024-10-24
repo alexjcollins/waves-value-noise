@@ -20,13 +20,13 @@ global.THREE = THREE;
 const uniforms = {
   ...getDefaultUniforms(),
   // wave 1
-  u_noise_freq_1: { value: 3.0 },
+  u_noise_freq_1: { value: 0.8 },
   u_noise_amp_1: { value: 0.2 },
   u_spd_modifier_1: { value: 1.0 },
   // wave 2
   u_noise_freq_2: { value: 2.0 },
-  u_noise_amp_2: { value: 0.3 },
-  u_spd_modifier_2: { value: 0.8 },
+  u_noise_amp_2: { value: 0.15 },
+  u_spd_modifier_2: { value: 0.2 },
 };
 
 /**************************************************
@@ -139,7 +139,7 @@ let app = {
 
     // Mesh
     // Create a custom hexagonal grid geometry with thick edges
-    this.geometry = this.createHexagonalMeshGeometry(4, 4, 0.1, 0.002);
+    this.geometry = this.createHexagonalMeshGeometry(4, 4, 0.1, 0.003);
 
     const material = new THREE.ShaderMaterial({
       uniforms: uniforms,
@@ -151,7 +151,7 @@ let app = {
     scene.add(this.mesh);
 
     // Set appropriate positioning
-    this.mesh.rotation.x = -Math.PI / 2;
+    this.mesh.rotation.x = -Math.PI / 3; // Rotate mesh to be horizontal
     this.mesh.position.y = 0;
 
     // GUI controls
@@ -216,8 +216,7 @@ let app = {
         const posY = y - gridHeight / 2;
 
         // Create hexagon edges as rectangles (quads)
-        const rotationOffset = Math.PI / 3; // Rotate hexagon by 60 degrees
-        const hexVertices = [];
+        const rotationOffset = 2 * Math.PI / 4; // Rotate hexagon by 120 degrees
         for (let i = 0; i < 6; i++) {
           const angle1 = (Math.PI / 3) * i + rotationOffset;
           const angle2 = (Math.PI / 3) * ((i + 1) % 6) + rotationOffset;
